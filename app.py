@@ -1,215 +1,125 @@
-import streamlit as st
-import pandas as pd
-import sqlite3
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Image, Spacer
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4, landscape
-from io import BytesIO
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+from datetime import datetime
 import os
 
-st.set_page_config(layout="wide")
+def gerar_pdf_solicitacao(df):
 
-# =========================
-# LOGIN
-# =========================
-def login():
-    if "logado" not in st.session_state:
-        st.session_state.logado = False
+    file_path = "solicitacao.pdf"
 
-    if not st.session_state.logado:
-        st.title("🔐 Login")
-        user = st.text_input("Usuário")
-        senha = st.text_input("Senha", type="password")
+    doc = SimpleDocTemplate(
+        file_path,
+        pagesize=landscape(A4),
+        leftMargin=1*cm,
+        rightMargin=1*cm,
+        topMargin=1*cm,
+        bottomMargin=1*cm
+    )
 
-        if st.button("Entrar"):
-            if user == "adm" and senha == "123":
-                st.session_state.logado = True
-                st.rerun()
+    styles = getSampleStyleSheet()
+
+    # 🔥 ESTILOS PERSONALIZADOS
+    titulo_style = ParagraphStyle(
+        name="Titulo",
+        fontSize=18,
+        alignment=1,
+        spaceAfter=10,
+        spaceBefore=10
+    )
+
+    info_style = ParagraphStyle(
+        name="Info",
+        fontSize=9,
+        spaceAfter=6
+    )
+
+    elements = []
+
+    # 🔷 CABEÇALHO COM LOGO + EMPRESA
+    if os.path.exists("logo.png"):
+        logo = Image("logo.png", width=3*cm, height=3*cm)
+        elements.append(logo)
+
+    empresa = Paragraph("<b>SUA EMPRESA LTDA</b>", styles["Normal"])
+    elements.append(empresa)
+
+    elements.append(Spacer(1, 10))
+
+    # 🔷 TÍTULO
+    titulo = Paragraph("<b>SOLICITAÇÃO DE COMPRA</b>", titulo_style)
+    elements.append(titulo)
+
+    # 🔷 INFO (DATA / NUMERO)
+    data_hoje = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    info = Paragraph(f"<b>Data de emissão:</b> {data_hoje}", info_style)
+    elements.append(info)
+
+    elements.append(Spacer(1, 10))
+
+    # 🔥 TRATAMENTO DF
+    df = df.fillna("")
+    df = df.astype(str)
+
+    # 🔥 MELHORAR DESCRIÇÃO (quebra de linha)
+    def quebra_texto(texto):
+        return Paragraph(texto, styles["Normal"])
+
+    data = [list(df.columns)]
+
+    for _, row in df.iterrows():
+        linha = []
+        for col in df.columns:
+            if col.lower() == "descricao":
+                linha.append(quebra_texto(row[col]))
             else:
-                st.error("Login inválido")
-        st.stop()
+                linha.append(row[col])
+        data.append(linha)
 
-login()
-
-# =========================
-# BANCO
-# =========================
-conn = sqlite3.connect("compras.db", check_same_thread=False)
-
-def salvar_tabela(df, nome):
-    df.columns = df.columns.str.lower().str.strip()
-    df = df.loc[:, ~df.columns.duplicated()]
-    df.to_sql(nome, conn, if_exists="replace", index=False)
-
-def carregar_tabela(nome):
-    try:
-        return pd.read_sql(f"SELECT * FROM {nome}", conn)
-    except:
-        return pd.DataFrame()
-
-# =========================
-# HEADER
-# =========================
-if os.path.exists("logo.png"):
-    st.image("logo.png", width=150)
-
-st.title("Sistema de Compras")
-
-menu = st.sidebar.selectbox("Menu", ["Solicitações", "Orçamentos", "Pedidos"])
-
-# =========================
-# SOLICITAÇÕES
-# =========================
-if menu == "Solicitações":
-    st.header("Solicitações")
-
-    arquivo = st.file_uploader("Upload planilha", type=["xlsx", "csv"])
-
-    if arquivo:
-        if arquivo.name.endswith("csv"):
-            df = pd.read_csv(arquivo)
+    # 🔥 LARGURA INTELIGENTE
+    col_widths = []
+    for col in df.columns:
+        if col.lower() == "descricao":
+            col_widths.append(8*cm)
         else:
-            df = pd.read_excel(arquivo)
+            col_widths.append(3*cm)
 
-        df.columns = df.columns.str.lower().str.strip()
+    table = Table(data, colWidths=col_widths, repeatRows=1)
 
-        st.subheader("Editar antes de salvar")
-        df_edit = st.data_editor(df, use_container_width=True, num_rows="dynamic")
+    table.setStyle(TableStyle([
+        # Cabeçalho
+        ("BACKGROUND", (0,0), (-1,0), colors.black),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
 
-        if st.button("Salvar Solicitações"):
-            salvar_tabela(df_edit, "solicitacoes")
-            st.success("Salvo com sucesso!")
+        # Corpo
+        ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("FONTNAME", (0,1), (-1,-1), "Helvetica"),
 
-    df = carregar_tabela("solicitacoes")
+        ("FONTSIZE", (0,0), (-1,-1), 8),
 
-    if not df.empty:
-        st.subheader("Dados Salvos")
-        st.dataframe(df, use_container_width=True)
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
 
-        # PDF DOWNLOAD
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
-        styles = getSampleStyleSheet()
+        # Alternar cor linha (zebra)
+        ("BACKGROUND", (0,1), (-1,-1), colors.whitesmoke),
+    ]))
 
-        elementos = []
+    elements.append(table)
 
-        if os.path.exists("logo.png"):
-            elementos.append(Image("logo.png", width=100, height=50))
+    elements.append(Spacer(1, 20))
 
-        elementos.append(Paragraph("SOLICITAÇÃO DE COMPRA", styles["Title"]))
-        elementos.append(Spacer(1, 10))
+    # 🔷 RODAPÉ
+    rodape = Paragraph(
+        f"Documento gerado automaticamente em {data_hoje}",
+        ParagraphStyle(name="rodape", fontSize=8, alignment=1)
+    )
 
-        tabela = [df.columns.tolist()] + df.values.tolist()
+    elements.append(rodape)
 
-        t = Table(tabela, repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.black),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("FONTSIZE", (0,0), (-1,-1), 8),
-            ("GRID",(0,0),(-1,-1),0.5,colors.grey),
-        ]))
+    doc.build(elements)
 
-        elementos.append(t)
-        doc.build(elementos)
-        buffer.seek(0)
-
-        st.download_button(
-            "📥 Baixar PDF Solicitação",
-            buffer,
-            file_name="solicitacao.pdf",
-            mime="application/pdf"
-        )
-
-# =========================
-# ORÇAMENTOS
-# =========================
-elif menu == "Orçamentos":
-    st.header("Orçamentos")
-
-    df = carregar_tabela("solicitacoes")
-
-    if df.empty:
-        st.warning("Sem solicitações")
-    else:
-        fornecedores = ["Fornecedor 1", "Fornecedor 2", "Fornecedor 3"]
-
-        linhas = []
-        for _, row in df.iterrows():
-            for f in fornecedores:
-                linhas.append({
-                    "id_solicitacao": row.get("id_solicitacao", ""),
-                    "codigo_material": row.get("codigo_material", ""),
-                    "descricao": row.get("descricao", ""),
-                    "quantidade": row.get("quantidade", 0),
-                    "fornecedor": f,
-                    "valor_unitario": 0,
-                    "total": 0
-                })
-
-        df_orc = pd.DataFrame(linhas)
-
-        df_edit = st.data_editor(df_orc, use_container_width=True)
-
-        if st.button("Salvar Orçamentos"):
-            df_edit["quantidade"] = pd.to_numeric(df_edit["quantidade"], errors="coerce").fillna(0)
-            df_edit["valor_unitario"] = pd.to_numeric(df_edit["valor_unitario"], errors="coerce").fillna(0)
-
-            df_edit["total"] = df_edit["quantidade"] * df_edit["valor_unitario"]
-
-            salvar_tabela(df_edit, "orcamentos")
-            st.success("Orçamento salvo!")
-
-        if st.button("Gerar Pedido"):
-            st.success("Vá para aba PEDIDOS")
-
-# =========================
-# PEDIDOS
-# =========================
-elif menu == "Pedidos":
-    st.header("Pedidos")
-
-    df = carregar_tabela("orcamentos")
-
-    if df.empty:
-        st.warning("Sem dados")
-    else:
-        fornecedor = st.selectbox("Fornecedor", df["fornecedor"].unique())
-
-        df_filtro = df[df["fornecedor"] == fornecedor]
-
-        st.dataframe(df_filtro, use_container_width=True)
-
-        # PDF DOWNLOAD
-        buffer = BytesIO()
-        doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
-        styles = getSampleStyleSheet()
-
-        elementos = []
-
-        if os.path.exists("logo.png"):
-            elementos.append(Image("logo.png", width=100, height=50))
-
-        elementos.append(Paragraph("PEDIDO DE COMPRA", styles["Title"]))
-        elementos.append(Spacer(1, 10))
-
-        tabela = [df_filtro.columns.tolist()] + df_filtro.values.tolist()
-
-        t = Table(tabela, repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.black),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("FONTSIZE", (0,0), (-1,-1), 8),
-            ("GRID",(0,0),(-1,-1),0.5,colors.grey),
-        ]))
-
-        elementos.append(t)
-        doc.build(elementos)
-        buffer.seek(0)
-
-        st.download_button(
-            "📥 Baixar PDF Pedido",
-            buffer,
-            file_name="pedido.pdf",
-            mime="application/pdf"
-        )
+    return file_path
