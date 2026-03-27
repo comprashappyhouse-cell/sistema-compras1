@@ -4,11 +4,9 @@ import sqlite3
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.pagesizes import A4, landscape
 import os
 
-# =========================
-# CONFIG
-# =========================
 st.set_page_config(layout="wide")
 
 # =========================
@@ -20,7 +18,6 @@ def login():
 
     if not st.session_state.logado:
         st.title("🔐 Login")
-
         user = st.text_input("Usuário")
         senha = st.text_input("Senha", type="password")
 
@@ -29,7 +26,7 @@ def login():
                 st.session_state.logado = True
                 st.rerun()
             else:
-                st.error("Usuário ou senha inválidos")
+                st.error("Login inválido")
         st.stop()
 
 login()
@@ -51,16 +48,13 @@ def carregar_tabela(nome):
         return pd.DataFrame()
 
 # =========================
-# LOGO
+# HEADER
 # =========================
 if os.path.exists("logo.png"):
-    st.image("logo.png", width=200)
+    st.image("logo.png", width=150)
 
 st.title("Sistema de Compras")
 
-# =========================
-# MENU
-# =========================
 menu = st.sidebar.selectbox("Menu", ["Solicitações", "Orçamentos", "Pedidos"])
 
 # =========================
@@ -79,32 +73,39 @@ if menu == "Solicitações":
 
         df.columns = df.columns.str.lower().str.strip()
 
-        st.dataframe(df, use_container_width=True)
+        st.subheader("Editar antes de salvar")
+        df_edit = st.data_editor(df, use_container_width=True, num_rows="dynamic")
 
         if st.button("Salvar Solicitações"):
-            salvar_tabela(df, "solicitacoes")
+            salvar_tabela(df_edit, "solicitacoes")
             st.success("Salvo com sucesso!")
 
     df = carregar_tabela("solicitacoes")
 
     if not df.empty:
+        st.subheader("Dados Salvos")
         st.dataframe(df, use_container_width=True)
 
         if st.button("Gerar PDF Solicitação"):
-            doc = SimpleDocTemplate("solicitacao.pdf")
+            doc = SimpleDocTemplate("solicitacao.pdf", pagesize=landscape(A4))
             styles = getSampleStyleSheet()
 
             elementos = []
+
+            if os.path.exists("logo.png"):
+                elementos.append(Image("logo.png", width=100, height=50))
+
             elementos.append(Paragraph("SOLICITAÇÃO DE COMPRA", styles["Title"]))
             elementos.append(Spacer(1, 10))
 
             tabela = [df.columns.tolist()] + df.values.tolist()
 
-            t = Table(tabela)
+            t = Table(tabela, repeatRows=1)
             t.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0), colors.grey),
+                ("BACKGROUND", (0,0), (-1,0), colors.black),
                 ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-                ("GRID",(0,0),(-1,-1),1,colors.black)
+                ("FONTSIZE", (0,0), (-1,-1), 8),
+                ("GRID",(0,0),(-1,-1),0.5,colors.grey),
             ]))
 
             elementos.append(t)
@@ -144,12 +145,15 @@ elif menu == "Orçamentos":
         df_edit = st.data_editor(df_orc, use_container_width=True)
 
         if st.button("Salvar Orçamentos"):
+            df_edit["quantidade"] = pd.to_numeric(df_edit["quantidade"], errors="coerce").fillna(0)
+            df_edit["valor_unitario"] = pd.to_numeric(df_edit["valor_unitario"], errors="coerce").fillna(0)
+
             df_edit["total"] = df_edit["quantidade"] * df_edit["valor_unitario"]
+
             salvar_tabela(df_edit, "orcamentos")
             st.success("Orçamento salvo!")
 
         if st.button("Gerar Pedido"):
-            st.session_state.ir_pedidos = True
             st.success("Vá para aba PEDIDOS")
 
 # =========================
@@ -170,20 +174,25 @@ elif menu == "Pedidos":
         st.dataframe(df_filtro, use_container_width=True)
 
         if st.button("Gerar PDF Pedido"):
-            doc = SimpleDocTemplate("pedido.pdf")
+            doc = SimpleDocTemplate("pedido.pdf", pagesize=landscape(A4))
             styles = getSampleStyleSheet()
 
             elementos = []
+
+            if os.path.exists("logo.png"):
+                elementos.append(Image("logo.png", width=100, height=50))
+
             elementos.append(Paragraph("PEDIDO DE COMPRA", styles["Title"]))
             elementos.append(Spacer(1, 10))
 
             tabela = [df_filtro.columns.tolist()] + df_filtro.values.tolist()
 
-            t = Table(tabela)
+            t = Table(tabela, repeatRows=1)
             t.setStyle(TableStyle([
                 ("BACKGROUND", (0,0), (-1,0), colors.black),
                 ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-                ("GRID",(0,0),(-1,-1),1,colors.black)
+                ("FONTSIZE", (0,0), (-1,-1), 8),
+                ("GRID",(0,0),(-1,-1),0.5,colors.grey),
             ]))
 
             elementos.append(t)
