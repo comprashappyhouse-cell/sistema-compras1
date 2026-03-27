@@ -1,138 +1,183 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-import os
 from datetime import datetime
+import io
 
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Image, Spacer
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, landscape
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
+from reportlab.lib.pagesizes import landscape, A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import mm
 
-# ================= BANCO =================
-conn = sqlite3.connect("compras.db", check_same_thread=False)
+# ---------------- LOGIN ----------------
+def login():
+    if "logado" not in st.session_state:
+        st.session_state.logado = False
 
-def carregar_tabela(nome):
+    if not st.session_state.logado:
+        st.title("🔐 Login")
+
+        user = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+
+        if st.button("Entrar"):
+            if user == "adm" and senha == "123":
+                st.session_state.logado = True
+                st.rerun()
+            else:
+                st.error("Usuário ou senha inválidos")
+        st.stop()
+
+# ---------------- BANCO ----------------
+def conectar():
+    return sqlite3.connect("compras.db", check_same_thread=False)
+
+def salvar(df, tabela):
+    conn = conectar()
+    df.to_sql(tabela, conn, if_exists="replace", index=False)
+    conn.close()
+
+def carregar(tabela):
+    conn = conectar()
     try:
-        return pd.read_sql(f"SELECT * FROM {nome}", conn)
+        df = pd.read_sql(f"SELECT * FROM {tabela}", conn)
     except:
-        return pd.DataFrame()
+        df = pd.DataFrame()
+    conn.close()
+    return df
 
-def salvar_tabela(df, nome):
-    df.to_sql(nome, conn, if_exists="replace", index=False)
+# ---------------- PDF AJUSTADO ----------------
+def gerar_pdf(df, titulo):
+    buffer = io.BytesIO()
 
-# ================= LOGIN =================
-if "logado" not in st.session_state:
-    st.session_state.logado = False
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        rightMargin=5,
+        leftMargin=5,
+        topMargin=5,
+        bottomMargin=5
+    )
 
-if not st.session_state.logado:
-    st.title("Login")
+    elements = []
+    styles = getSampleStyleSheet()
 
-    user = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
+    # Logo menor
+    try:
+        img = Image("logo.png", width=35, height=35)
+        elements.append(img)
+    except:
+        pass
 
-    if st.button("Entrar"):
-        if user == "adm" and senha == "123":
-            st.session_state.logado = True
-            st.rerun()
-        else:
-            st.error("Login inválido")
+    # Título
+    elements.append(Paragraph(f"<b>{titulo}</b>", styles["Heading2"]))
+    elements.append(Spacer(1, 6))
 
-    st.stop()
+    df = df.fillna("").astype(str)
 
-# ================= LAYOUT =================
+    data = [df.columns.tolist()]
+
+    for _, row in df.iterrows():
+        linha = []
+        for col in df.columns:
+            texto = str(row[col]).replace(",", "<br/>")
+            linha.append(Paragraph(texto, styles["Normal"]))
+        data.append(linha)
+
+    # 🔥 AJUSTE DE ESCALA (ZOOM CORRETO)
+    largura_total = 280 * mm
+    col_width = largura_total / len(df.columns)
+
+    table = Table(
+        data,
+        repeatRows=1,
+        colWidths=[col_width] * len(df.columns)
+    )
+
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.black),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+
+        ("FONTSIZE", (0,0), (-1,-1), 6),
+
+        ("ALIGN", (0,0), (-1,-1), "CENTER"),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+
+        ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
+
+        ("LEFTPADDING", (0,0), (-1,-1), 2),
+        ("RIGHTPADDING", (0,0), (-1,-1), 2),
+        ("TOPPADDING", (0,0), (-1,-1), 1),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 1),
+    ]))
+
+    elements.append(table)
+
+    elements.append(Spacer(1, 5))
+    elements.append(Paragraph(
+        f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        styles["Normal"]
+    ))
+
+    doc.build(elements)
+
+    buffer.seek(0)
+    return buffer
+
+# ---------------- APP ----------------
+login()
+
 st.set_page_config(layout="wide")
 
-if os.path.exists("logo.png"):
-    st.image("logo.png", width=150)
+# Logo
+try:
+    st.image("logo.png", width=120)
+except:
+    pass
 
 st.title("Sistema de Compras")
 
 menu = st.sidebar.selectbox("Menu", ["Solicitações", "Orçamentos", "Pedidos"])
 
-# ================= PDF =================
-def gerar_pdf(df, nome="arquivo.pdf"):
-
-    doc = SimpleDocTemplate(
-        nome,
-        pagesize=landscape(A4),
-        leftMargin=1*cm,
-        rightMargin=1*cm,
-        topMargin=1*cm,
-        bottomMargin=1*cm
-    )
-
-    styles = getSampleStyleSheet()
-    elements = []
-
-    if os.path.exists("logo.png"):
-        elements.append(Image("logo.png", width=3*cm, height=3*cm))
-
-    elements.append(Paragraph("<b>DOCUMENTO DE COMPRA</b>", styles["Title"]))
-
-    df = df.fillna("").astype(str)
-
-    data = [list(df.columns)] + df.values.tolist()
-
-    largura_total = 27 * cm
-    col_width = largura_total / len(df.columns)
-
-    table = Table(data, colWidths=[col_width]*len(df.columns), repeatRows=1)
-
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.black),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
-        ("FONTSIZE", (0,0), (-1,-1), 7),
-    ]))
-
-    elements.append(table)
-
-    elements.append(Spacer(1, 20))
-    elements.append(Paragraph(
-        f"Gerado em {datetime.now().strftime('%d/%m/%Y %H:%M')}",
-        ParagraphStyle(name="rodape", fontSize=8)
-    ))
-
-    doc.build(elements)
-
-    return nome
-
-# ================= SOLICITAÇÕES =================
+# ---------------- SOLICITAÇÕES ----------------
 if menu == "Solicitações":
 
-    st.subheader("Solicitações")
+    st.subheader("Upload de Solicitações")
 
-    file = st.file_uploader("Upload Excel", type=["xlsx", "csv"])
+    file = st.file_uploader("Subir planilha", type=["xlsx", "csv"])
 
     if file:
-        df_upload = pd.read_excel(file) if file.name.endswith("xlsx") else pd.read_csv(file)
-        st.data_editor(df_upload, use_container_width=True, key="edit_solic")
+        if file.name.endswith("csv"):
+            df = pd.read_csv(file)
+        else:
+            df = pd.read_excel(file)
 
-        if st.button("Salvar Solicitações"):
-            salvar_tabela(df_upload, "solicitacoes")
-            st.success("Salvo!")
+        df = st.data_editor(df, use_container_width=True)
 
-    df = carregar_tabela("solicitacoes")
+        if st.button("Salvar"):
+            salvar(df, "solicitacoes")
+            st.success("Salvo com sucesso")
+
+    df = carregar("solicitacoes")
 
     if not df.empty:
         st.dataframe(df, use_container_width=True)
 
-        if st.button("Gerar PDF Solicitação"):
-            path = gerar_pdf(df, "solicitacao.pdf")
-            with open(path, "rb") as f:
-                st.download_button("Baixar PDF", f, file_name="solicitacao.pdf")
+        pdf = gerar_pdf(df, "SOLICITAÇÃO DE COMPRA")
 
-# ================= ORÇAMENTOS =================
+        st.download_button("📄 Baixar PDF", pdf, "solicitacao.pdf")
+
+# ---------------- ORÇAMENTOS ----------------
 if menu == "Orçamentos":
 
-    st.subheader("Orçamentos")
+    df = carregar("solicitacoes")
 
-    df = carregar_tabela("solicitacoes")
-
-    if not df.empty:
-
+    if df.empty:
+        st.warning("Nenhuma solicitação")
+    else:
         fornecedores = ["Fornecedor 1", "Fornecedor 2", "Fornecedor 3"]
 
         lista = []
@@ -140,10 +185,7 @@ if menu == "Orçamentos":
         for _, row in df.iterrows():
             for f in fornecedores:
                 lista.append({
-                    "id_solicitacao": row.get("id_solicitacao", ""),
-                    "codigo_material": row.get("codigo_material", ""),
-                    "descricao": row.get("descricao", ""),
-                    "quantidade": row.get("quantidade", 1),
+                    **row,
                     "fornecedor": f,
                     "valor_unitario": 0,
                     "total": 0
@@ -151,33 +193,39 @@ if menu == "Orçamentos":
 
         df_orc = pd.DataFrame(lista)
 
-        df_edit = st.data_editor(df_orc, use_container_width=True)
+        df_orc = st.data_editor(df_orc, use_container_width=True)
+
+        if "quantidade" in df_orc.columns:
+            df_orc["quantidade"] = pd.to_numeric(df_orc["quantidade"], errors="coerce").fillna(0)
+            df_orc["valor_unitario"] = pd.to_numeric(df_orc["valor_unitario"], errors="coerce").fillna(0)
+            df_orc["total"] = df_orc["quantidade"] * df_orc["valor_unitario"]
 
         if st.button("Salvar Orçamentos"):
-            df_edit["total"] = df_edit["quantidade"].astype(float) * df_edit["valor_unitario"].astype(float)
-            salvar_tabela(df_edit, "orcamentos")
-            st.success("Orçamentos salvos!")
+            salvar(df_orc, "orcamentos")
+            st.success("Orçamentos salvos")
+
+        fornecedor_sel = st.selectbox("Fornecedor vencedor", fornecedores)
+
+        df_filtrado = df_orc[df_orc["fornecedor"] == fornecedor_sel]
 
         if st.button("Gerar Pedido"):
-            salvar_tabela(df_edit, "pedidos")
-            st.success("Pedido gerado!")
+            salvar(df_filtrado, "pedidos")
+            st.success("Pedido gerado")
 
-# ================= PEDIDOS =================
+# ---------------- PEDIDOS ----------------
 if menu == "Pedidos":
 
-    st.subheader("Pedidos")
+    df = carregar("pedidos")
 
-    df = carregar_tabela("pedidos")
-
-    if not df.empty:
-
+    if df.empty:
+        st.warning("Nenhum pedido")
+    else:
         fornecedor = st.selectbox("Fornecedor", df["fornecedor"].unique())
 
-        df_filtrado = df[df["fornecedor"] == fornecedor]
+        df_f = df[df["fornecedor"] == fornecedor]
 
-        st.dataframe(df_filtrado, use_container_width=True)
+        st.dataframe(df_f, use_container_width=True)
 
-        if st.button("Gerar PDF Pedido"):
-            path = gerar_pdf(df_filtrado, "pedido.pdf")
-            with open(path, "rb") as f:
-                st.download_button("Baixar PDF", f, file_name="pedido.pdf")
+        pdf = gerar_pdf(df_f, "PEDIDO DE COMPRA")
+
+        st.download_button("📄 Baixar PDF Pedido", pdf, "pedido.pdf")
