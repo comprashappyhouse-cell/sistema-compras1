@@ -5,6 +5,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4, landscape
+from io import BytesIO
 import os
 
 st.set_page_config(layout="wide")
@@ -37,7 +38,7 @@ login()
 conn = sqlite3.connect("compras.db", check_same_thread=False)
 
 def salvar_tabela(df, nome):
-    df.columns = [c.lower().strip() for c in df.columns]
+    df.columns = df.columns.str.lower().str.strip()
     df = df.loc[:, ~df.columns.duplicated()]
     df.to_sql(nome, conn, if_exists="replace", index=False)
 
@@ -86,32 +87,39 @@ if menu == "Solicitações":
         st.subheader("Dados Salvos")
         st.dataframe(df, use_container_width=True)
 
-        if st.button("Gerar PDF Solicitação"):
-            doc = SimpleDocTemplate("solicitacao.pdf", pagesize=landscape(A4))
-            styles = getSampleStyleSheet()
+        # PDF DOWNLOAD
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
+        styles = getSampleStyleSheet()
 
-            elementos = []
+        elementos = []
 
-            if os.path.exists("logo.png"):
-                elementos.append(Image("logo.png", width=100, height=50))
+        if os.path.exists("logo.png"):
+            elementos.append(Image("logo.png", width=100, height=50))
 
-            elementos.append(Paragraph("SOLICITAÇÃO DE COMPRA", styles["Title"]))
-            elementos.append(Spacer(1, 10))
+        elementos.append(Paragraph("SOLICITAÇÃO DE COMPRA", styles["Title"]))
+        elementos.append(Spacer(1, 10))
 
-            tabela = [df.columns.tolist()] + df.values.tolist()
+        tabela = [df.columns.tolist()] + df.values.tolist()
 
-            t = Table(tabela, repeatRows=1)
-            t.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0), colors.black),
-                ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-                ("FONTSIZE", (0,0), (-1,-1), 8),
-                ("GRID",(0,0),(-1,-1),0.5,colors.grey),
-            ]))
+        t = Table(tabela, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.black),
+            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTSIZE", (0,0), (-1,-1), 8),
+            ("GRID",(0,0),(-1,-1),0.5,colors.grey),
+        ]))
 
-            elementos.append(t)
-            doc.build(elementos)
+        elementos.append(t)
+        doc.build(elementos)
+        buffer.seek(0)
 
-            st.success("PDF gerado!")
+        st.download_button(
+            "📥 Baixar PDF Solicitação",
+            buffer,
+            file_name="solicitacao.pdf",
+            mime="application/pdf"
+        )
 
 # =========================
 # ORÇAMENTOS
@@ -127,7 +135,6 @@ elif menu == "Orçamentos":
         fornecedores = ["Fornecedor 1", "Fornecedor 2", "Fornecedor 3"]
 
         linhas = []
-
         for _, row in df.iterrows():
             for f in fornecedores:
                 linhas.append({
@@ -173,29 +180,36 @@ elif menu == "Pedidos":
 
         st.dataframe(df_filtro, use_container_width=True)
 
-        if st.button("Gerar PDF Pedido"):
-            doc = SimpleDocTemplate("pedido.pdf", pagesize=landscape(A4))
-            styles = getSampleStyleSheet()
+        # PDF DOWNLOAD
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
+        styles = getSampleStyleSheet()
 
-            elementos = []
+        elementos = []
 
-            if os.path.exists("logo.png"):
-                elementos.append(Image("logo.png", width=100, height=50))
+        if os.path.exists("logo.png"):
+            elementos.append(Image("logo.png", width=100, height=50))
 
-            elementos.append(Paragraph("PEDIDO DE COMPRA", styles["Title"]))
-            elementos.append(Spacer(1, 10))
+        elementos.append(Paragraph("PEDIDO DE COMPRA", styles["Title"]))
+        elementos.append(Spacer(1, 10))
 
-            tabela = [df_filtro.columns.tolist()] + df_filtro.values.tolist()
+        tabela = [df_filtro.columns.tolist()] + df_filtro.values.tolist()
 
-            t = Table(tabela, repeatRows=1)
-            t.setStyle(TableStyle([
-                ("BACKGROUND", (0,0), (-1,0), colors.black),
-                ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-                ("FONTSIZE", (0,0), (-1,-1), 8),
-                ("GRID",(0,0),(-1,-1),0.5,colors.grey),
-            ]))
+        t = Table(tabela, repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.black),
+            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+            ("FONTSIZE", (0,0), (-1,-1), 8),
+            ("GRID",(0,0),(-1,-1),0.5,colors.grey),
+        ]))
 
-            elementos.append(t)
-            doc.build(elementos)
+        elementos.append(t)
+        doc.build(elementos)
+        buffer.seek(0)
 
-            st.success("PDF gerado!")
+        st.download_button(
+            "📥 Baixar PDF Pedido",
+            buffer,
+            file_name="pedido.pdf",
+            mime="application/pdf"
+        )
