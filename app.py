@@ -37,6 +37,11 @@ def salvar(df, tabela):
     df.to_sql(tabela, conn, if_exists="replace", index=False)
     conn.close()
 
+def append(df, tabela):
+    conn = conectar()
+    df.to_sql(tabela, conn, if_exists="append", index=False)
+    conn.close()
+
 def carregar(tabela):
     conn = conectar()
     try:
@@ -87,8 +92,8 @@ def gerar_pdf(df, titulo, colunas):
     ]))
 
     elements.append(table)
-
     doc.build(elements)
+
     buffer.seek(0)
     return buffer
 
@@ -110,7 +115,7 @@ if tema == "Bege":
 elif tema == "Escuro":
     st.markdown("<style>.stApp{background:#121212;color:white}</style>", unsafe_allow_html=True)
 
-# LOGO + HEADER
+# HEADER
 col1, col2, col3 = st.columns([1,2,1])
 with col2:
     try:
@@ -135,24 +140,31 @@ if menu == "Solicitações":
         st.success("Importado")
 
     if not df.empty:
-        df["selecionar"] = False
+
+        df["excluir"] = False
+        df["pdf"] = False
+        df["pedido"] = False
+
         df_edit = st.data_editor(df, use_container_width=True)
 
-        colunas_pdf = st.multiselect("Colunas PDF", df_edit.columns, default=df_edit.columns)
+        colunas_pdf = st.multiselect("Colunas PDF", df.columns, default=df.columns)
 
         c1,c2,c3 = st.columns(3)
 
         if c1.button("Salvar"):
-            salvar(df_edit.drop(columns=["selecionar"]),"solicitacoes")
-            st.success("Salvo")
+            salvar(df_edit.drop(columns=["excluir","pdf","pedido"]),"solicitacoes")
 
         if c2.button("Excluir"):
-            salvar(df_edit[df_edit["selecionar"]==False].drop(columns=["selecionar"]),"solicitacoes")
-            st.warning("Excluído")
+            salvar(df_edit[df_edit["excluir"]==False].drop(columns=["excluir","pdf","pedido"]),"solicitacoes")
 
         if c3.button("Gerar PDF"):
-            pdf = gerar_pdf(df_edit.drop(columns=["selecionar"]),"SOLICITAÇÃO",colunas_pdf)
-            st.download_button("Baixar PDF",pdf,"solicitacao.pdf")
+            df_pdf = df_edit[df_edit["pdf"]==True]
+
+            if not df_pdf.empty:
+                pdf = gerar_pdf(df_pdf.drop(columns=["excluir","pdf","pedido"]),"SOLICITAÇÃO",colunas_pdf)
+                st.download_button("Baixar PDF",pdf,"solicitacao.pdf")
+            else:
+                st.warning("Selecione linhas para PDF")
 
 # ---------------- ORÇAMENTOS ----------------
 if menu == "Orçamentos":
@@ -177,15 +189,14 @@ if menu == "Orçamentos":
         df_orc["total"] = df_orc["quantidade"] * df_orc["valor_unitario"]
 
         if st.button("Salvar Orçamento"):
-            conn = conectar()
-            df_orc.to_sql("historico_orcamentos",conn,if_exists="append",index=False)
-            conn.close()
-            st.success("Salvo histórico")
+            append(df_orc,"historico_orcamentos")
+            st.success("Histórico salvo")
 
         fornecedor = st.selectbox("Fornecedor vencedor", fornecedores)
 
         if st.button("Gerar Pedido"):
-            salvar(df_orc[df_orc["fornecedor"]==fornecedor],"pedidos")
+            df_pedido = df_orc[df_orc["fornecedor"]==fornecedor]
+            salvar(df_pedido,"pedidos")
             st.success("Pedido gerado")
 
 # ---------------- PEDIDOS ----------------
