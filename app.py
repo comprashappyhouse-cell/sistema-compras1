@@ -1,186 +1,222 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from datetime import datetime
+import io
+
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import landscape, A4
 from reportlab.lib.styles import getSampleStyleSheet
-import datetime
+from reportlab.lib.units import mm
 
-# =============================
-# CONFIG
-# =============================
+# ---------------- LOGIN ----------------
+def login():
+    if "logado" not in st.session_state:
+        st.session_state.logado = False
+
+    if not st.session_state.logado:
+        st.title("🔐 Login")
+        user = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+
+        if st.button("Entrar"):
+            if user == "adm" and senha == "123":
+                st.session_state.logado = True
+                st.rerun()
+            else:
+                st.error("Usuário ou senha inválidos")
+        st.stop()
+
+# ---------------- BANCO ----------------
+def conectar():
+    return sqlite3.connect("compras.db", check_same_thread=False)
+
+def salvar(df, tabela):
+    conn = conectar()
+    df.to_sql(tabela, conn, if_exists="replace", index=False)
+    conn.close()
+
+def carregar(tabela):
+    conn = conectar()
+    try:
+        df = pd.read_sql(f"SELECT * FROM {tabela}", conn)
+    except:
+        df = pd.DataFrame()
+    conn.close()
+    return df
+
+# ---------------- PDF ----------------
+def gerar_pdf(df, titulo, colunas):
+    buffer = io.BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        rightMargin=5,
+        leftMargin=5,
+        topMargin=5,
+        bottomMargin=5
+    )
+
+    elements = []
+    styles = getSampleStyleSheet()
+
+    try:
+        elements.append(Image("logo.png", width=40, height=40))
+    except:
+        pass
+
+    elements.append(Paragraph(f"<b>{titulo}</b>", styles["Heading2"]))
+    elements.append(Spacer(1, 6))
+
+    df = df[colunas].fillna("").astype(str)
+
+    data = [df.columns.tolist()] + df.values.tolist()
+
+    largura_total = 260 * mm
+    col_width = largura_total / len(df.columns)
+
+    table = Table(data, repeatRows=1, colWidths=[col_width]*len(df.columns))
+
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,0), colors.black),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTSIZE", (0,0), (-1,-1), 7),
+        ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
+    ]))
+
+    elements.append(table)
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
+# ---------------- APP ----------------
+login()
 st.set_page_config(layout="wide")
 
-conn = sqlite3.connect("compras.db", check_same_thread=False)
+# 🎨 TEMA
+if "tema" not in st.session_state:
+    st.session_state.tema = "Bege"
 
-# =============================
-# LOGIN
-# =============================
-if "logado" not in st.session_state:
-    st.session_state.logado = False
+col_top1, col_top2 = st.columns([8,2])
+with col_top2:
+    tema = st.selectbox("🎨 Tema", ["Bege", "Claro", "Escuro"])
+    st.session_state.tema = tema
 
-if not st.session_state.logado:
-    st.title("🔐 Login")
-    user = st.text_input("Usuário")
-    senha = st.text_input("Senha", type="password")
+if tema == "Bege":
+    st.markdown("<style>.stApp{background:#D6C5A4}</style>", unsafe_allow_html=True)
+elif tema == "Escuro":
+    st.markdown("<style>.stApp{background:#121212;color:white}</style>", unsafe_allow_html=True)
 
-    if st.button("Entrar"):
-        if user == "adm" and senha == "123":
-            st.session_state.logado = True
-            st.rerun()
-        else:
-            st.error("Login inválido")
-    st.stop()
-
-# =============================
-# TEMA
-# =============================
-tema = st.selectbox("🎨 Tema", ["Claro", "Escuro", "ERP"])
-
-if tema == "Escuro":
-    st.markdown("<style>body{background:#111;color:white}</style>", unsafe_allow_html=True)
-elif tema == "ERP":
-    st.markdown("<style>body{background:#f4f6f9}</style>", unsafe_allow_html=True)
-
-# =============================
-# MENU
-# =============================
-menu = st.sidebar.selectbox("Menu", ["Dashboard","Solicitações","Orçamentos","Pedidos"])
-
-# =============================
-# FUNÇÕES
-# =============================
-def salvar(df, nome):
-    df.to_sql(nome, conn, if_exists="replace", index=False)
-
-def carregar(nome):
+# LOGO + HEADER
+col1, col2, col3 = st.columns([1,2,1])
+with col2:
     try:
-        return pd.read_sql(f"SELECT * FROM {nome}", conn)
+        st.image("logo.png", width=120)
     except:
-        return pd.DataFrame()
+        pass
+    st.markdown("<h1 style='text-align:center'>Sistema de Compras</h1>", unsafe_allow_html=True)
 
-# =============================
-# DASHBOARD
-# =============================
-if menu == "Dashboard":
-    st.title("📊 Dashboard")
+# MENU
+menu = st.sidebar.radio("Menu", ["Solicitações","Orçamentos","Pedidos","Dashboard"])
 
-    sol = carregar("solicitacoes")
-    ped = carregar("pedidos")
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("Solicitações", len(sol))
-    col2.metric("Pedidos", len(ped))
-
-    if not ped.empty and "total" in ped.columns:
-        col3.metric("Total Comprado", f"R$ {ped['total'].sum():,.2f}")
-    else:
-        col3.metric("Total Comprado", "R$ 0")
-
-# =============================
-# SOLICITAÇÕES
-# =============================
-elif menu == "Solicitações":
-    st.title("📋 Solicitações")
-
-    uploaded = st.file_uploader("Upload Excel")
-
-    if uploaded:
-        df = pd.read_excel(uploaded)
-        st.session_state.df_sol = df
-
-    if "df_sol" not in st.session_state:
-        st.session_state.df_sol = carregar("solicitacoes")
-
-    df_edit = st.data_editor(st.session_state.df_sol, num_rows="dynamic", use_container_width=True)
-
-    col1, col2 = st.columns(2)
-
-    if col1.button("💾 Salvar"):
-        salvar(df_edit, "solicitacoes")
-        st.success("Salvo!")
-
-    if col2.button("🗑️ Limpar Tudo"):
-        st.session_state.df_sol = pd.DataFrame()
-        salvar(pd.DataFrame(), "solicitacoes")
-        st.rerun()
-
-    # PDF com seleção de colunas
-    st.subheader("📄 Gerar PDF")
-
-    colunas = list(df_edit.columns)
-    colunas_sel = st.multiselect("Escolher colunas", colunas, default=colunas)
-
-    if st.button("Gerar PDF Solicitação"):
-        doc = SimpleDocTemplate("solicitacao.pdf", pagesize=landscape(A4))
-        data = [colunas_sel] + df_edit[colunas_sel].astype(str).values.tolist()
-
-        tabela = Table(data, repeatRows=1)
-        tabela.setStyle(TableStyle([
-            ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
-            ('FONTSIZE', (0,0), (-1,-1), 7),
-        ]))
-
-        doc.build([tabela])
-
-        with open("solicitacao.pdf", "rb") as f:
-            st.download_button("📥 Baixar PDF", f, "solicitacao.pdf")
-
-# =============================
-# ORÇAMENTOS
-# =============================
-elif menu == "Orçamentos":
-    st.title("💰 Orçamentos")
+# ---------------- SOLICITAÇÕES ----------------
+if menu == "Solicitações":
 
     df = carregar("solicitacoes")
 
-    if df.empty:
-        st.warning("Sem dados")
-        st.stop()
+    file = st.file_uploader("Upload", type=["xlsx","csv"])
 
-    cod = st.selectbox("Filtrar Solicitação", df["id_solicitacao"].unique())
+    if file:
+        df = pd.read_excel(file) if file.name.endswith("xlsx") else pd.read_csv(file)
+        salvar(df,"solicitacoes")
+        st.success("Importado")
 
-    df_filtrado = df[df["id_solicitacao"] == cod]
+    if not df.empty:
+        df["selecionar"] = False
+        df_edit = st.data_editor(df, use_container_width=True)
 
-    df_edit = st.data_editor(df_filtrado, use_container_width=True)
+        colunas_pdf = st.multiselect("Colunas PDF", df_edit.columns, default=df_edit.columns)
 
-    if st.button("Salvar Orçamento"):
-        salvar(df_edit, "orcamentos")
-        st.success("Salvo!")
+        c1,c2,c3 = st.columns(3)
 
-    if st.button("Gerar Pedido"):
-        df_edit["total"] = df_edit["quantidade"] * df_edit.get("valor_unitario",1)
-        salvar(df_edit, "pedidos")
-        st.success("Pedido gerado!")
+        if c1.button("Salvar"):
+            salvar(df_edit.drop(columns=["selecionar"]),"solicitacoes")
+            st.success("Salvo")
 
-# =============================
-# PEDIDOS
-# =============================
-elif menu == "Pedidos":
-    st.title("📦 Pedidos")
+        if c2.button("Excluir"):
+            salvar(df_edit[df_edit["selecionar"]==False].drop(columns=["selecionar"]),"solicitacoes")
+            st.warning("Excluído")
+
+        if c3.button("Gerar PDF"):
+            pdf = gerar_pdf(df_edit.drop(columns=["selecionar"]),"SOLICITAÇÃO",colunas_pdf)
+            st.download_button("Baixar PDF",pdf,"solicitacao.pdf")
+
+# ---------------- ORÇAMENTOS ----------------
+if menu == "Orçamentos":
+
+    df = carregar("solicitacoes")
+
+    if not df.empty:
+
+        fornecedores = ["Fornecedor 1","Fornecedor 2","Fornecedor 3"]
+
+        lista = []
+        for _,row in df.iterrows():
+            for f in fornecedores:
+                lista.append({**row,"fornecedor":f,"valor_unitario":0})
+
+        df_orc = pd.DataFrame(lista)
+
+        df_orc = st.data_editor(df_orc, use_container_width=True)
+
+        df_orc["quantidade"] = pd.to_numeric(df_orc.get("quantidade",0), errors="coerce").fillna(0)
+        df_orc["valor_unitario"] = pd.to_numeric(df_orc["valor_unitario"], errors="coerce").fillna(0)
+        df_orc["total"] = df_orc["quantidade"] * df_orc["valor_unitario"]
+
+        if st.button("Salvar Orçamento"):
+            conn = conectar()
+            df_orc.to_sql("historico_orcamentos",conn,if_exists="append",index=False)
+            conn.close()
+            st.success("Salvo histórico")
+
+        fornecedor = st.selectbox("Fornecedor vencedor", fornecedores)
+
+        if st.button("Gerar Pedido"):
+            salvar(df_orc[df_orc["fornecedor"]==fornecedor],"pedidos")
+            st.success("Pedido gerado")
+
+# ---------------- PEDIDOS ----------------
+if menu == "Pedidos":
 
     df = carregar("pedidos")
 
-    if df.empty:
-        st.warning("Sem pedidos")
-        st.stop()
+    if not df.empty:
+        st.dataframe(df, use_container_width=True)
 
-    st.dataframe(df, use_container_width=True)
+        colunas_pdf = st.multiselect("Colunas PDF", df.columns, default=df.columns)
 
-    if st.button("📄 Gerar PDF Pedido"):
-        doc = SimpleDocTemplate("pedido.pdf", pagesize=landscape(A4))
+        if st.button("Gerar PDF Pedido"):
+            pdf = gerar_pdf(df,"PEDIDO",colunas_pdf)
+            st.download_button("Baixar PDF",pdf,"pedido.pdf")
 
-        data = [df.columns.tolist()] + df.astype(str).values.tolist()
+# ---------------- DASHBOARD ----------------
+if menu == "Dashboard":
 
-        tabela = Table(data, repeatRows=1)
-        tabela.setStyle(TableStyle([
-            ('GRID', (0,0), (-1,-1), 0.3, colors.grey),
-            ('FONTSIZE', (0,0), (-1,-1), 7),
-        ]))
+    df_sol = carregar("solicitacoes")
+    df_ped = carregar("pedidos")
 
-        doc.build([tabela])
+    c1,c2,c3 = st.columns(3)
 
-        with open("pedido.pdf", "rb") as f:
-            st.download_button("📥 Baixar PDF", f, "pedido.pdf")
+    c1.metric("Solicitações", len(df_sol))
+    c2.metric("Pedidos", len(df_ped))
+
+    if not df_ped.empty:
+        total = pd.to_numeric(df_ped["total"], errors="coerce").sum()
+        c3.metric("Total Comprado", f"R$ {total:,.2f}")
+
+    if not df_ped.empty:
+        resumo = df_ped.groupby("fornecedor")["total"].sum()
+        st.bar_chart(resumo)
