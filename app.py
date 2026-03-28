@@ -142,33 +142,91 @@ st.title("Sistema de Compras")
 
 menu = st.sidebar.selectbox("Menu", ["Solicitações", "Orçamentos", "Pedidos"])
 
+
+
 # ---------------- SOLICITAÇÕES ----------------
 if menu == "Solicitações":
 
-    st.subheader("Upload de Solicitações")
+    st.subheader("Gestão de Solicitações")
 
+    df = carregar("solicitacoes")
+
+    # 🔹 GERAR ID AUTOMÁTICO
+    def gerar_id(df):
+        if df.empty:
+            return "SOL-0001"
+        ultimo = df["id_solicitacao"].iloc[-1]
+        num = int(ultimo.split("-")[1]) + 1
+        return f"SOL-{num:04d}"
+
+    # 🔹 FILTROS
+    col1, col2 = st.columns(2)
+
+    with col1:
+        filtro_codigo = st.text_input("Buscar código")
+
+    with col2:
+        filtro_desc = st.text_input("Buscar descrição")
+
+    if not df.empty:
+        df_filtrado = df.copy()
+
+        if filtro_codigo:
+            df_filtrado = df_filtrado[df_filtrado.astype(str).apply(lambda x: x.str.contains(filtro_codigo, case=False)).any(axis=1)]
+
+        if filtro_desc:
+            df_filtrado = df_filtrado[df_filtrado.astype(str).apply(lambda x: x.str.contains(filtro_desc, case=False)).any(axis=1)]
+    else:
+        df_filtrado = df
+
+    # 🔹 UPLOAD
     file = st.file_uploader("Subir planilha", type=["xlsx", "csv"])
 
     if file:
         if file.name.endswith("csv"):
-            df = pd.read_csv(file)
+            df_upload = pd.read_csv(file)
         else:
-            df = pd.read_excel(file)
+            df_upload = pd.read_excel(file)
 
-        df = st.data_editor(df, use_container_width=True)
+        if "id_solicitacao" not in df_upload.columns:
+            df_upload["id_solicitacao"] = gerar_id(df)
 
-        if st.button("Salvar"):
-            salvar(df, "solicitacoes")
-            st.success("Salvo com sucesso")
+        salvar(df_upload, "solicitacoes")
+        st.success("Planilha importada!")
+        st.rerun()
 
-    df = carregar("solicitacoes")
+    # 🔹 TABELA COM CHECKBOX
+    if not df_filtrado.empty:
 
-    if not df.empty:
-        st.dataframe(df, use_container_width=True)
+        df_filtrado["selecionar"] = False
 
-        pdf = gerar_pdf(df, "SOLICITAÇÃO DE COMPRA")
+        df_edit = st.data_editor(
+            df_filtrado,
+            use_container_width=True,
+            num_rows="dynamic"
+        )
 
-        st.download_button("📄 Baixar PDF", pdf, "solicitacao.pdf")
+        col1, col2, col3 = st.columns(3)
+
+        # 💾 SALVAR
+        with col1:
+            if st.button("💾 Salvar"):
+                salvar(df_edit.drop(columns=["selecionar"]), "solicitacoes")
+                st.success("Salvo!")
+                st.rerun()
+
+        # 🗑️ EXCLUIR SELECIONADOS
+        with col2:
+            if st.button("🗑️ Excluir selecionados"):
+                df_novo = df_edit[df_edit["selecionar"] == False]
+                salvar(df_novo.drop(columns=["selecionar"]), "solicitacoes")
+                st.warning("Itens excluídos")
+                st.rerun()
+
+        # 📄 PDF
+        with col3:
+            pdf = gerar_pdf(df_edit.drop(columns=["selecionar"]), "SOLICITAÇÃO DE COMPRA")
+            st.download_button("📄 PDF", pdf, "solicitacao.pdf")
 
 # ---------------- ORÇAMENTOS ----------------
 if menu == "Orçamentos":
@@ -215,17 +273,38 @@ if menu == "Orçamentos":
 # ---------------- PEDIDOS ----------------
 if menu == "Pedidos":
 
+    st.subheader("Pedidos")
+
     df = carregar("pedidos")
+
+    def gerar_id_pedido(df):
+        if df.empty:
+            return "PED-0001"
+        ultimo = df["id_pedido"].iloc[-1]
+        num = int(ultimo.split("-")[1]) + 1
+        return f"PED-{num:04d}"
 
     if df.empty:
         st.warning("Nenhum pedido")
     else:
+
         fornecedor = st.selectbox("Fornecedor", df["fornecedor"].unique())
 
         df_f = df[df["fornecedor"] == fornecedor]
 
-        st.dataframe(df_f, use_container_width=True)
+        df_f["selecionar"] = False
 
-        pdf = gerar_pdf(df_f, "PEDIDO DE COMPRA")
+        df_edit = st.data_editor(df_f, use_container_width=True)
 
-        st.download_button("📄 Baixar PDF Pedido", pdf, "pedido.pdf")
+        col1, col2 = st.columns(2)
+
+        with col1:
+            pdf = gerar_pdf(df_edit.drop(columns=["selecionar"]), "PEDIDO DE COMPRA")
+            st.download_button("📄 Baixar PDF", pdf, "pedido.pdf")
+
+        with col2:
+            if st.button("🗑️ Excluir selecionados"):
+                df_novo = df[~df.index.isin(df_edit[df_edit["selecionar"] == True].index)]
+                salvar(df_novo, "pedidos")
+                st.warning("Itens removidos")
+                st.rerun()
