@@ -51,6 +51,14 @@ def carregar(tabela):
     conn.close()
     return df
 
+# 🔥 RESET CONTROLADO DA TABELA PEDIDOS (RODA 1 VEZ)
+def reset_pedidos():
+    if "reset_db" not in st.session_state:
+        conn = conectar()
+        conn.execute("DROP TABLE IF EXISTS pedidos")
+        conn.close()
+        st.session_state.reset_db = True
+
 # ---------------- PDF ----------------
 def gerar_pdf(df, titulo, colunas):
     buffer = io.BytesIO()
@@ -76,7 +84,6 @@ def gerar_pdf(df, titulo, colunas):
     elements.append(Spacer(1, 6))
 
     df = df[colunas].fillna("").astype(str)
-
     data = [df.columns.tolist()] + df.values.tolist()
 
     largura_total = 260 * mm
@@ -101,30 +108,9 @@ def gerar_pdf(df, titulo, colunas):
 login()
 st.set_page_config(layout="wide")
 
-# 🎨 TEMA
-if "tema" not in st.session_state:
-    st.session_state.tema = "Bege"
+# 🔥 executa reset 1 vez
+reset_pedidos()
 
-col_top1, col_top2 = st.columns([8,2])
-with col_top2:
-    tema = st.selectbox("🎨 Tema", ["Bege", "Claro", "Escuro"])
-    st.session_state.tema = tema
-
-if tema == "Bege":
-    st.markdown("<style>.stApp{background:#D6C5A4}</style>", unsafe_allow_html=True)
-elif tema == "Escuro":
-    st.markdown("<style>.stApp{background:#121212;color:white}</style>", unsafe_allow_html=True)
-
-# HEADER
-col1, col2, col3 = st.columns([1,2,1])
-with col2:
-    try:
-        st.image("logo.png", width=120)
-    except:
-        pass
-    st.markdown("<h1 style='text-align:center'>Sistema de Compras</h1>", unsafe_allow_html=True)
-
-# MENU
 menu = st.sidebar.radio("Menu", ["Solicitações","Orçamentos","Pedidos","Dashboard"])
 
 # ---------------- SOLICITAÇÕES ----------------
@@ -167,7 +153,7 @@ if menu == "Solicitações":
                 st.warning("Selecione linhas para PDF")
 
 # ---------------- ORÇAMENTOS ----------------
-if menu == "Orçamentos":
+elif menu == "Orçamentos":
 
     df = carregar("solicitacoes")
 
@@ -192,20 +178,64 @@ if menu == "Orçamentos":
             append(df_orc,"historico_orcamentos")
             st.success("Histórico salvo")
 
-        fornecedor = st.selectbox("Fornecedor vencedor", fornecedores)
+        modo = st.radio("Modo de geração", ["Manual", "Automático (menor preço)"])
 
-        if st.button("Gerar Pedido"):
-            df_pedido = df_orc[df_orc["fornecedor"]==fornecedor]
-            salvar(df_pedido,"pedidos")
-            st.success("Pedido gerado")
+        if modo == "Manual":
+
+            fornecedor = st.selectbox("Fornecedor vencedor", fornecedores)
+
+            if st.button("Gerar Pedido"):
+                df_pedido = df_orc[df_orc["fornecedor"] == fornecedor].copy()
+
+                df_pedido["data_pedido"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                df_pedido["id_pedido"] = int(datetime.now().timestamp())
+                df_pedido["status"] = "PENDENTE"
+
+                append(df_pedido, "pedidos")
+
+                st.success("Pedido gerado (manual)")
+
+        else:
+
+            if st.button("Gerar Pedido Inteligente"):
+
+                df_temp = df_orc.copy()
+                df_temp["valor_unitario"] = pd.to_numeric(df_temp["valor_unitario"], errors="coerce").fillna(999999)
+
+                idx = df_temp.groupby("descricao")["valor_unitario"].idxmin()
+                df_pedido = df_temp.loc[idx].copy()
+
+                df_pedido["data_pedido"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                df_pedido["id_pedido"] = int(datetime.now().timestamp())
+                df_pedido["status"] = "PENDENTE"
+
+                append(df_pedido, "pedidos")
+
+                st.success("Pedido gerado automaticamente")
 
 # ---------------- PEDIDOS ----------------
-if menu == "Pedidos":
+elif menu == "Pedidos":
 
     df = carregar("pedidos")
 
     if not df.empty:
-        st.dataframe(df, use_container_width=True)
+
+        df["aprovar"] = False
+        df["reprovar"] = False
+
+        df_edit = st.data_editor(df, use_container_width=True)
+
+        c1, c2 = st.columns(2)
+
+        if c1.button("✅ Aprovar Pedido"):
+            df_edit.loc[df_edit["aprovar"] == True, "status"] = "APROVADO"
+            salvar(df_edit.drop(columns=["aprovar","reprovar"]), "pedidos")
+            st.success("Pedidos aprovados")
+
+        if c2.button("❌ Reprovar Pedido"):
+            df_edit.loc[df_edit["reprovar"] == True, "status"] = "REPROVADO"
+            salvar(df_edit.drop(columns=["aprovar","reprovar"]), "pedidos")
+            st.warning("Pedidos reprovados")
 
         colunas_pdf = st.multiselect("Colunas PDF", df.columns, default=df.columns)
 
@@ -214,7 +244,7 @@ if menu == "Pedidos":
             st.download_button("Baixar PDF",pdf,"pedido.pdf")
 
 # ---------------- DASHBOARD ----------------
-if menu == "Dashboard":
+elif menu == "Dashboard":
 
     df_sol = carregar("solicitacoes")
     df_ped = carregar("pedidos")
@@ -228,6 +258,10 @@ if menu == "Dashboard":
         total = pd.to_numeric(df_ped["total"], errors="coerce").sum()
         c3.metric("Total Comprado", f"R$ {total:,.2f}")
 
-    if not df_ped.empty:
-        resumo = df_ped.groupby("fornecedor")["total"].sum()
+        st.subheader("📊 Ranking de Fornecedores")
+        resumo = df_ped.groupby("fornecedor")["total"].sum().sort_values(ascending=False)
         st.bar_chart(resumo)
+
+        st.subheader("📊 Status dos Pedidos")
+        status_count = df_ped["status"].value_counts()
+        st.bar_chart(status_count)
