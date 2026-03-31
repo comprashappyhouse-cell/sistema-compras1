@@ -141,7 +141,7 @@ login()
 migrar_banco()
 st.set_page_config(layout="wide")
 
-menu = st.sidebar.radio("Menu", ["Solicitações","Orçamentos","Pedidos","Dashboard","Projetos","Notas"])
+menu = st.sidebar.radio("Menu", ["Solicitações","Orçamentos","Pedidos","Dashboard","Projetos","Notas","Histórico"])
 
 # ---------------- SOLICITAÇÕES ----------------
 if menu == "Solicitações":
@@ -213,7 +213,6 @@ if menu == "Solicitações":
             st.download_button("Baixar Excel", excel, "solicitacoes.xlsx")
 
 # ---------------- ORÇAMENTOS ----------------
-# ---------------- ORÇAMENTOS ----------------
 elif menu == "Orçamentos":
 
     df = carregar("solicitacoes")
@@ -221,11 +220,8 @@ elif menu == "Orçamentos":
 
     if not df.empty:
 
-        # 🔹 SE JÁ EXISTE ORÇAMENTO SALVO → USA ELE
         if not df_orc_salvo.empty:
             df_orc = df_orc_salvo.copy()
-
-        # 🔹 SENÃO CRIA NOVO
         else:
             fornecedores = ["Fornecedor 1","Fornecedor 2","Fornecedor 3"]
 
@@ -236,25 +232,45 @@ elif menu == "Orçamentos":
 
             df_orc = pd.DataFrame(lista)
 
-        # 🔹 EDIÇÃO
+        # EDIÇÃO
         df_orc = st.data_editor(df_orc, use_container_width=True)
 
-        # 🔹 GARANTE TIPOS
+        # TIPOS
         df_orc["quantidade"] = pd.to_numeric(df_orc.get("quantidade", 0), errors="coerce").fillna(0)
         df_orc["valor_unitario"] = pd.to_numeric(df_orc["valor_unitario"], errors="coerce").fillna(0)
         df_orc["total"] = df_orc["quantidade"] * df_orc["valor_unitario"]
 
-        # 🔹 SALVAR (IMPORTANTE: AGORA SUBSTITUI, NÃO DUPLICA)
+        # 🔥 DESCONTO CORRETO
+        st.subheader("💰 Desconto por Fornecedor")
+
+        fornecedores_unicos = df_orc["fornecedor"].dropna().unique().tolist()
+        descontos = {}
+
+        for f in fornecedores_unicos:
+            descontos[f] = st.number_input(f"Desconto para {f} (R$)", value=0.0, key=f"desc_{f}")
+
+        # APLICAR DESCONTO
+        df_orc["desconto_aplicado"] = 0.0
+
+        for f in fornecedores_unicos:
+            total_forn = df_orc[df_orc["fornecedor"] == f]["total"].sum()
+
+            if total_forn > 0:
+                proporcao = df_orc["total"] / total_forn
+                df_orc.loc[df_orc["fornecedor"] == f, "desconto_aplicado"] = proporcao * descontos[f]
+
+        df_orc["total_final"] = df_orc["total"] - df_orc["desconto_aplicado"]
+
+        # SALVAR CORRETO
         if st.button("Salvar Orçamento"):
             salvar(df_orc, "historico_orcamentos")
             st.success("Orçamento salvo com sucesso")
 
-        # 🔹 ESCOLHA DE MODO
+        # MODO
         modo = st.radio("Modo de geração", ["Manual", "Automático"])
 
         if modo == "Manual":
 
-            fornecedores_unicos = df_orc["fornecedor"].dropna().unique().tolist()
             fornecedor = st.selectbox("Fornecedor vencedor", fornecedores_unicos)
 
             if st.button("Gerar Pedido"):
@@ -424,3 +440,43 @@ elif menu == "Notas":
                 st.success("Recebimento registrado com sucesso")
             else:
                 st.warning("Selecione itens recebidos")
+                
+                # ---------------- HISTÓRICO ----------------
+elif menu == "Histórico":
+
+    st.subheader("📊 Histórico de Compras")
+
+    df = carregar("historico_orcamentos")
+
+    if df.empty:
+        st.warning("Sem histórico ainda")
+    else:
+
+        # FILTROS
+        col1, col2 = st.columns(2)
+
+        with col1:
+            fornecedor = st.selectbox("Fornecedor", ["Todos"] + df["fornecedor"].dropna().unique().tolist())
+
+        with col2:
+            material = st.selectbox("Material", ["Todos"] + df["descricao"].dropna().unique().tolist())
+
+        df_filtro = df.copy()
+
+        if fornecedor != "Todos":
+            df_filtro = df_filtro[df_filtro["fornecedor"] == fornecedor]
+
+        if material != "Todos":
+            df_filtro = df_filtro[df_filtro["descricao"] == material]
+
+        st.dataframe(df_filtro, use_container_width=True)
+
+        # 📈 PREÇO MÉDIO
+        if "valor_unitario" in df_filtro.columns:
+            st.subheader("💰 Evolução de Preço")
+            preco = df_filtro.groupby("descricao")["valor_unitario"].mean()
+            st.bar_chart(preco)
+            
+            # 🔻 APLICAR DESCONTO GLOBAL
+
+
