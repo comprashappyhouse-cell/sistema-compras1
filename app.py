@@ -8,7 +8,6 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import landscape, A4
 from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.units import mm
 
 # ---------------- LOGIN ----------------
 def login():
@@ -51,7 +50,7 @@ def carregar(tabela):
     conn.close()
     return df
 
-# 🔥 RESET CONTROLADO DA TABELA PEDIDOS (RODA 1 VEZ)
+# ---------------- RESET CONTROLADO ----------------
 def reset_pedidos():
     if "reset_db" not in st.session_state:
         conn = conectar()
@@ -59,19 +58,17 @@ def reset_pedidos():
         conn.close()
         st.session_state.reset_db = True
 
+def reset_orcamentos():
+    if "reset_orc" not in st.session_state:
+        conn = conectar()
+        conn.execute("DROP TABLE IF EXISTS historico_orcamentos")
+        conn.close()
+        st.session_state.reset_orc = True
+
 # ---------------- PDF ----------------
 def gerar_pdf(df, titulo, colunas):
     buffer = io.BytesIO()
-
-    doc = SimpleDocTemplate(
-        buffer,
-        pagesize=landscape(A4),
-        rightMargin=5,
-        leftMargin=5,
-        topMargin=5,
-        bottomMargin=5
-    )
-
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
     elements = []
     styles = getSampleStyleSheet()
 
@@ -86,16 +83,10 @@ def gerar_pdf(df, titulo, colunas):
     df = df[colunas].fillna("").astype(str)
     data = [df.columns.tolist()] + df.values.tolist()
 
-    largura_total = 260 * mm
-    col_width = largura_total / len(df.columns)
-
-    table = Table(data, repeatRows=1, colWidths=[col_width]*len(df.columns))
-
+    table = Table(data, repeatRows=1)
     table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.black),
-        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
-        ("FONTSIZE", (0,0), (-1,-1), 7),
         ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
+        ("FONTSIZE", (0,0), (-1,-1), 7),
     ]))
 
     elements.append(table)
@@ -104,12 +95,20 @@ def gerar_pdf(df, titulo, colunas):
     buffer.seek(0)
     return buffer
 
+# ---------------- EXCEL ----------------
+def exportar_excel(df):
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
+    buffer.seek(0)
+    return buffer
+
 # ---------------- APP ----------------
 login()
 st.set_page_config(layout="wide")
 
-# 🔥 executa reset 1 vez
 reset_pedidos()
+reset_orcamentos()
 
 menu = st.sidebar.radio("Menu", ["Solicitações","Orçamentos","Pedidos","Dashboard"])
 
@@ -127,15 +126,37 @@ if menu == "Solicitações":
 
     if not df.empty:
 
-        df["excluir"] = False
-        df["pdf"] = False
-        df["pedido"] = False
+        if "numero_solicitacao" not in df.columns:
+            df["numero_solicitacao"] = "SOL-" + pd.Series(range(1, len(df)+1)).astype(str)
 
-        df_edit = st.data_editor(df, use_container_width=True)
+        if "data_solicitacao" not in df.columns:
+            df["data_solicitacao"] = datetime.now().strftime("%Y-%m-%d")
+
+        modo_visual = st.radio("Visualizar por:", ["Tudo", "Número", "Data"])
+
+        df_filtro = df.copy()
+
+        if modo_visual == "Número":
+            numeros = df["numero_solicitacao"].unique()
+            selecionados = st.multiselect("Selecione os números", numeros)
+
+            if selecionados:
+                df_filtro = df[df["numero_solicitacao"].isin(selecionados)]
+
+        elif modo_visual == "Data":
+            datas = df["data_solicitacao"].unique()
+            sel = st.selectbox("Selecione a data", datas)
+            df_filtro = df[df["data_solicitacao"] == sel]
+
+        df_filtro["excluir"] = False
+        df_filtro["pdf"] = False
+        df_filtro["pedido"] = False
+
+        df_edit = st.data_editor(df_filtro, use_container_width=True)
 
         colunas_pdf = st.multiselect("Colunas PDF", df.columns, default=df.columns)
 
-        c1,c2,c3 = st.columns(3)
+        c1,c2,c3,c4 = st.columns(4)
 
         if c1.button("Salvar"):
             salvar(df_edit.drop(columns=["excluir","pdf","pedido"]),"solicitacoes")
@@ -145,12 +166,13 @@ if menu == "Solicitações":
 
         if c3.button("Gerar PDF"):
             df_pdf = df_edit[df_edit["pdf"]==True]
-
             if not df_pdf.empty:
                 pdf = gerar_pdf(df_pdf.drop(columns=["excluir","pdf","pedido"]),"SOLICITAÇÃO",colunas_pdf)
                 st.download_button("Baixar PDF",pdf,"solicitacao.pdf")
-            else:
-                st.warning("Selecione linhas para PDF")
+
+        if c4.button("📥 Exportar Excel"):
+            excel = exportar_excel(df_edit.drop(columns=["excluir","pdf","pedido"]))
+            st.download_button("Baixar Excel", excel, "solicitacoes.xlsx")
 
 # ---------------- ORÇAMENTOS ----------------
 elif menu == "Orçamentos":
@@ -178,47 +200,41 @@ elif menu == "Orçamentos":
             append(df_orc,"historico_orcamentos")
             st.success("Histórico salvo")
 
-        modo = st.radio("Modo de geração", ["Manual", "Automático (menor preço)"])
+        modo = st.radio("Modo de geração", ["Manual", "Automático"])
 
         if modo == "Manual":
 
-            fornecedor = st.selectbox("Fornecedor vencedor", fornecedores)
+            fornecedores_unicos = df_orc["fornecedor"].dropna().unique().tolist()
+            fornecedor = st.selectbox("Fornecedor vencedor", fornecedores_unicos)
 
             if st.button("Gerar Pedido"):
                 df_pedido = df_orc[df_orc["fornecedor"] == fornecedor].copy()
-
                 df_pedido["data_pedido"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 df_pedido["id_pedido"] = int(datetime.now().timestamp())
                 df_pedido["status"] = "PENDENTE"
-
                 append(df_pedido, "pedidos")
-
-                st.success("Pedido gerado (manual)")
+                st.success("Pedido gerado")
 
         else:
-
             if st.button("Gerar Pedido Inteligente"):
-
                 df_temp = df_orc.copy()
                 df_temp["valor_unitario"] = pd.to_numeric(df_temp["valor_unitario"], errors="coerce").fillna(999999)
-
                 idx = df_temp.groupby("descricao")["valor_unitario"].idxmin()
                 df_pedido = df_temp.loc[idx].copy()
-
                 df_pedido["data_pedido"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 df_pedido["id_pedido"] = int(datetime.now().timestamp())
                 df_pedido["status"] = "PENDENTE"
-
                 append(df_pedido, "pedidos")
-
-                st.success("Pedido gerado automaticamente")
+                st.success("Pedido automático gerado")
 
 # ---------------- PEDIDOS ----------------
 elif menu == "Pedidos":
 
     df = carregar("pedidos")
 
-    if not df.empty:
+    if df.empty:
+        st.warning("Nenhum pedido gerado ainda")
+    else:
 
         df["aprovar"] = False
         df["reprovar"] = False
@@ -237,6 +253,8 @@ elif menu == "Pedidos":
             salvar(df_edit.drop(columns=["aprovar","reprovar"]), "pedidos")
             st.warning("Pedidos reprovados")
 
+        st.divider()
+
         colunas_pdf = st.multiselect("Colunas PDF", df.columns, default=df.columns)
 
         if st.button("Gerar PDF Pedido"):
@@ -249,19 +267,5 @@ elif menu == "Dashboard":
     df_sol = carregar("solicitacoes")
     df_ped = carregar("pedidos")
 
-    c1,c2,c3 = st.columns(3)
-
-    c1.metric("Solicitações", len(df_sol))
-    c2.metric("Pedidos", len(df_ped))
-
-    if not df_ped.empty:
-        total = pd.to_numeric(df_ped["total"], errors="coerce").sum()
-        c3.metric("Total Comprado", f"R$ {total:,.2f}")
-
-        st.subheader("📊 Ranking de Fornecedores")
-        resumo = df_ped.groupby("fornecedor")["total"].sum().sort_values(ascending=False)
-        st.bar_chart(resumo)
-
-        st.subheader("📊 Status dos Pedidos")
-        status_count = df_ped["status"].value_counts()
-        st.bar_chart(status_count)
+    st.metric("Solicitações", len(df_sol))
+    st.metric("Pedidos", len(df_ped))
