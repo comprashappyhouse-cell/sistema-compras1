@@ -38,7 +38,17 @@ def salvar(df, tabela):
 
 def append(df, tabela):
     conn = conectar()
-    df.to_sql(tabela, conn, if_exists="append", index=False)
+
+    # Garante que tudo é texto/número simples
+    df = df.copy()
+    df.columns = [str(c) for c in df.columns]
+
+    try:
+        df.to_sql(tabela, conn, if_exists="append", index=False)
+    except Exception as e:
+        # Se falhar, recria a tabela com a estrutura correta
+        df.to_sql(tabela, conn, if_exists="replace", index=False)
+
     conn.close()
 
 def carregar(tabela):
@@ -203,31 +213,43 @@ if menu == "Solicitações":
             st.download_button("Baixar Excel", excel, "solicitacoes.xlsx")
 
 # ---------------- ORÇAMENTOS ----------------
+# ---------------- ORÇAMENTOS ----------------
 elif menu == "Orçamentos":
 
     df = carregar("solicitacoes")
+    df_orc_salvo = carregar("historico_orcamentos")
 
     if not df.empty:
 
-        fornecedores = ["Fornecedor 1","Fornecedor 2","Fornecedor 3"]
+        # 🔹 SE JÁ EXISTE ORÇAMENTO SALVO → USA ELE
+        if not df_orc_salvo.empty:
+            df_orc = df_orc_salvo.copy()
 
-        lista = []
-        for _,row in df.iterrows():
-            for f in fornecedores:
-                lista.append({**row,"fornecedor":f,"valor_unitario":0})
+        # 🔹 SENÃO CRIA NOVO
+        else:
+            fornecedores = ["Fornecedor 1","Fornecedor 2","Fornecedor 3"]
 
-        df_orc = pd.DataFrame(lista)
+            lista = []
+            for _, row in df.iterrows():
+                for f in fornecedores:
+                    lista.append({**row, "fornecedor": f, "valor_unitario": 0})
 
+            df_orc = pd.DataFrame(lista)
+
+        # 🔹 EDIÇÃO
         df_orc = st.data_editor(df_orc, use_container_width=True)
 
-        df_orc["quantidade"] = pd.to_numeric(df_orc.get("quantidade",0), errors="coerce").fillna(0)
+        # 🔹 GARANTE TIPOS
+        df_orc["quantidade"] = pd.to_numeric(df_orc.get("quantidade", 0), errors="coerce").fillna(0)
         df_orc["valor_unitario"] = pd.to_numeric(df_orc["valor_unitario"], errors="coerce").fillna(0)
         df_orc["total"] = df_orc["quantidade"] * df_orc["valor_unitario"]
 
+        # 🔹 SALVAR (IMPORTANTE: AGORA SUBSTITUI, NÃO DUPLICA)
         if st.button("Salvar Orçamento"):
-            append(df_orc,"historico_orcamentos")
-            st.success("Histórico salvo")
+            salvar(df_orc, "historico_orcamentos")
+            st.success("Orçamento salvo com sucesso")
 
+        # 🔹 ESCOLHA DE MODO
         modo = st.radio("Modo de geração", ["Manual", "Automático"])
 
         if modo == "Manual":
@@ -240,19 +262,22 @@ elif menu == "Orçamentos":
                 df_pedido["data_pedido"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 df_pedido["id_pedido"] = int(datetime.now().timestamp())
                 df_pedido["status"] = "PENDENTE"
-                append(df_pedido, "pedidos")
+                salvar(df_pedido, "pedidos")
                 st.success("Pedido gerado")
 
         else:
             if st.button("Gerar Pedido Inteligente"):
                 df_temp = df_orc.copy()
                 df_temp["valor_unitario"] = pd.to_numeric(df_temp["valor_unitario"], errors="coerce").fillna(999999)
+
                 idx = df_temp.groupby("descricao")["valor_unitario"].idxmin()
                 df_pedido = df_temp.loc[idx].copy()
+
                 df_pedido["data_pedido"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 df_pedido["id_pedido"] = int(datetime.now().timestamp())
                 df_pedido["status"] = "PENDENTE"
-                append(df_pedido, "pedidos")
+
+                salvar(df_pedido, "pedidos")
                 st.success("Pedido automático gerado")
 
 # ---------------- PEDIDOS ----------------
