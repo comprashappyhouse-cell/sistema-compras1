@@ -49,6 +49,44 @@ def carregar(tabela):
         df = pd.DataFrame()
     conn.close()
     return df
+    
+# ---------------- PDF ----------------
+def gerar_pdf(df, titulo, colunas):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
+    elements = []
+    styles = getSampleStyleSheet()
+
+    try:
+        elements.append(Image("logo.png", width=40, height=40))
+    except:
+        pass
+
+    elements.append(Paragraph(f"<b>{titulo}</b>", styles["Heading2"]))
+    elements.append(Spacer(1, 6))
+
+    df = df[colunas].fillna("").astype(str)
+    data = [df.columns.tolist()] + df.values.tolist()
+
+    table = Table(data, repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
+        ("FONTSIZE", (0,0), (-1,-1), 7),
+    ]))
+
+    elements.append(table)
+    doc.build(elements)
+
+    buffer.seek(0)
+    return buffer
+
+# ---------------- EXCEL ----------------
+def exportar_excel(df):
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
+    buffer.seek(0)
+    return buffer
 
 # ---------------- MIGRAÇÃO BANCO ----------------
 def migrar_banco():
@@ -254,11 +292,54 @@ elif menu == "Pedidos":
 # ---------------- DASHBOARD ----------------
 elif menu == "Dashboard":
 
+    st.subheader("📊 Dashboard Inteligente")
+
     df_sol = carregar("solicitacoes")
     df_ped = carregar("pedidos")
+    df_notas = carregar("notas")
 
-    st.metric("Solicitações", len(df_sol))
-    st.metric("Pedidos", len(df_ped))
+    c1, c2, c3, c4 = st.columns(4)
+
+    total_solic = len(df_sol)
+    total_ped = len(df_ped)
+
+    total_valor = 0
+    if not df_ped.empty and "total" in df_ped.columns:
+        total_valor = pd.to_numeric(df_ped["total"], errors="coerce").sum()
+
+    total_recebido = len(df_notas)
+
+    c1.metric("Solicitações", total_solic)
+    c2.metric("Pedidos", total_ped)
+    c3.metric("Total Comprado", f"R$ {total_valor:,.2f}")
+    c4.metric("Itens Recebidos", total_recebido)
+
+    st.divider()
+
+    # 📦 STATUS
+    if not df_ped.empty and "status" in df_ped.columns:
+        st.subheader("Status dos Pedidos")
+        status_count = df_ped["status"].value_counts()
+        st.bar_chart(status_count)
+
+    # 🏭 FORNECEDORES
+    if not df_ped.empty and "fornecedor" in df_ped.columns:
+        st.subheader("Top Fornecedores")
+        top_forn = df_ped.groupby("fornecedor")["total"].sum().sort_values(ascending=False)
+        st.bar_chart(top_forn)
+
+    # 📊 ITENS MAIS COMPRADOS
+    if not df_ped.empty and "descricao" in df_ped.columns:
+        st.subheader("Itens Mais Comprados")
+        itens = df_ped["descricao"].value_counts().head(10)
+        st.bar_chart(itens)
+
+    # 📅 EVOLUÇÃO
+    if not df_ped.empty and "data_pedido" in df_ped.columns:
+        st.subheader("Evolução de Compras")
+        df_ped["data"] = pd.to_datetime(df_ped["data_pedido"], errors="coerce")
+        evolucao = df_ped.groupby(df_ped["data"].dt.date)["total"].sum()
+        st.line_chart(evolucao)
 
 # ---------------- PROJETOS ----------------
 elif menu == "Projetos":
