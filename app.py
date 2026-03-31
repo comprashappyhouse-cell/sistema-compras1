@@ -50,67 +50,50 @@ def carregar(tabela):
     conn.close()
     return df
 
-# ---------------- RESET CONTROLADO ----------------
-def reset_pedidos():
-    if "reset_db" not in st.session_state:
-        conn = conectar()
-        conn.execute("DROP TABLE IF EXISTS pedidos")
-        conn.close()
-        st.session_state.reset_db = True
+# ---------------- MIGRAÇÃO BANCO ----------------
+def migrar_banco():
+    conn = conectar()
+    cursor = conn.cursor()
 
-def reset_orcamentos():
-    if "reset_orc" not in st.session_state:
-        conn = conectar()
-        conn.execute("DROP TABLE IF EXISTS historico_orcamentos")
-        conn.close()
-        st.session_state.reset_orc = True
+    cursor.execute("CREATE TABLE IF NOT EXISTS pedidos (id INTEGER PRIMARY KEY)")
+    colunas = [i[1] for i in cursor.execute("PRAGMA table_info(pedidos)")]
 
-# ---------------- PDF ----------------
-def gerar_pdf(df, titulo, colunas):
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=landscape(A4))
-    elements = []
-    styles = getSampleStyleSheet()
+    if "data_pedido" not in colunas:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN data_pedido TEXT")
 
-    try:
-        elements.append(Image("logo.png", width=40, height=40))
-    except:
-        pass
+    if "id_pedido" not in colunas:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN id_pedido INTEGER")
 
-    elements.append(Paragraph(f"<b>{titulo}</b>", styles["Heading2"]))
-    elements.append(Spacer(1, 6))
+    if "status" not in colunas:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN status TEXT")
 
-    df = df[colunas].fillna("").astype(str)
-    data = [df.columns.tolist()] + df.values.tolist()
+    if "fornecedor" not in colunas:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN fornecedor TEXT")
 
-    table = Table(data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
-        ("FONTSIZE", (0,0), (-1,-1), 7),
-    ]))
+    if "total" not in colunas:
+        cursor.execute("ALTER TABLE pedidos ADD COLUMN total REAL")
 
-    elements.append(table)
-    doc.build(elements)
+    cursor.execute("CREATE TABLE IF NOT EXISTS historico_orcamentos (id INTEGER PRIMARY KEY)")
+    colunas_orc = [i[1] for i in cursor.execute("PRAGMA table_info(historico_orcamentos)")]
 
-    buffer.seek(0)
-    return buffer
+    if "numero_solicitacao" not in colunas_orc:
+        cursor.execute("ALTER TABLE historico_orcamentos ADD COLUMN numero_solicitacao TEXT")
 
-# ---------------- EXCEL ----------------
-def exportar_excel(df):
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-    buffer.seek(0)
-    return buffer
+    if "fornecedor" not in colunas_orc:
+        cursor.execute("ALTER TABLE historico_orcamentos ADD COLUMN fornecedor TEXT")
+
+    if "valor_unitario" not in colunas_orc:
+        cursor.execute("ALTER TABLE historico_orcamentos ADD COLUMN valor_unitario REAL")
+
+    conn.commit()
+    conn.close()
 
 # ---------------- APP ----------------
 login()
+migrar_banco()
 st.set_page_config(layout="wide")
 
-reset_pedidos()
-reset_orcamentos()
-
-menu = st.sidebar.radio("Menu", ["Solicitações","Orçamentos","Pedidos","Dashboard"])
+menu = st.sidebar.radio("Menu", ["Solicitações","Orçamentos","Pedidos","Dashboard","Projetos","Notas"])
 
 # ---------------- SOLICITAÇÕES ----------------
 if menu == "Solicitações":
@@ -136,10 +119,17 @@ if menu == "Solicitações":
 
         df_filtro = df.copy()
 
+        # PROJETOS
+        df_proj = carregar("projetos")
+        if not df_proj.empty:
+            projetos = df_proj["projeto"].unique()
+            projeto_sel = st.selectbox("Projeto", projetos)
+            df_filtro["projeto"] = projeto_sel
+
+        # FILTRO
         if modo_visual == "Número":
             numeros = df["numero_solicitacao"].unique()
             selecionados = st.multiselect("Selecione os números", numeros)
-
             if selecionados:
                 df_filtro = df[df["numero_solicitacao"].isin(selecionados)]
 
@@ -269,3 +259,62 @@ elif menu == "Dashboard":
 
     st.metric("Solicitações", len(df_sol))
     st.metric("Pedidos", len(df_ped))
+
+# ---------------- PROJETOS ----------------
+elif menu == "Projetos":
+
+    st.subheader("Cadastro de Projetos")
+
+    nome = st.text_input("Nome do Projeto")
+    cliente = st.text_input("Cliente")
+
+    if st.button("Salvar Projeto"):
+        if nome and cliente:
+            df = pd.DataFrame([{
+                "projeto": nome,
+                "cliente": cliente,
+                "data": datetime.now().strftime("%Y-%m-%d")
+            }])
+            append(df, "projetos")
+            st.success("Projeto salvo")
+        else:
+            st.warning("Preencha os campos")
+
+    df_proj = carregar("projetos")
+
+    if not df_proj.empty:
+        st.dataframe(df_proj, use_container_width=True)
+        
+        
+        # ---------------- NOTAS / RECEBIMENTO ----------------
+elif menu == "Notas":
+
+    st.subheader("Recebimento de Materiais")
+
+    df = carregar("pedidos")
+
+    if df.empty:
+        st.warning("Nenhum pedido disponível")
+    else:
+
+        pedidos = df["id_pedido"].dropna().unique()
+        pedido_sel = st.selectbox("Selecione o Pedido", pedidos)
+
+        df_sel = df[df["id_pedido"] == pedido_sel].copy()
+
+        df_sel["recebido"] = False
+
+        df_edit = st.data_editor(df_sel, use_container_width=True)
+
+        if st.button("Confirmar Recebimento"):
+
+            df_recebido = df_edit[df_edit["recebido"] == True].copy()
+
+            if not df_recebido.empty:
+                df_recebido["data_recebimento"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+                append(df_recebido, "notas")
+
+                st.success("Recebimento registrado com sucesso")
+            else:
+                st.warning("Selecione itens recebidos")
